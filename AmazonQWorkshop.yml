@@ -1,26 +1,106 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Plantilla de CloudFormation para desplegar una tabla DynamoDB y un contenedor en Fargate con un ALB en diferentes subredes.'
+Description: Plantilla de CloudFormation para desplegar una tabla DynamoDB y un contenedor en Fargate con un ALB en diferentes subredes.
 
 Parameters:
   ContainerName:
     Type: String
-    Description: 'El nombre que se asignara al contenedor.'
-    Default: 'mutant-app'
+    Description: El nombre que se asignara al contenedor.
+    Default: mutant-app
   Repositorio:
     Type: String
-    Description: 'Uri del repositorio'
-    Default: '471112733977.dkr.ecr.us-east-1.amazonaws.com/mutant-app'
-
+    Description: Uri del repositorio
+    Default: <account-id>.dkr.ecr.us-east-1.amazonaws.com/backend/demo_microservices
 Resources:
-  # Clúster ECS
-  ECSCluster:
-    Type: 'AWS::ECS::Cluster'
+  VPC:
+    Type: AWS::EC2::VPC
     Properties:
-      ClusterName: !Sub 'ecs-${ContainerName}'
-
-  # Rol IAM para la tarea ECS
-  ECSRole:
-    Type: 'AWS::IAM::Role'
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      MapPublicIpOnLaunch: true
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ''
+      MapPublicIpOnLaunch: true
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref RouteTable
+  SubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref RouteTable
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permitir trafico HTTP al ALB desde cualquier puerto e IP
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permitir trafico a los contenedores ECS
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: mutant
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: dna
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: dna
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -30,14 +110,15 @@ Resources:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: ECSAccessPolicy
+        - PolicyName: ECSServiceDynamoDBPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
                   - dynamodb:*
-                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/mutant
+                Resource:
+                  - !GetAtt DynamoDBTable.Arn
               - Effect: Allow
                 Action:
                   - ecr:GetDownloadUrlForLayer
@@ -48,112 +129,87 @@ Resources:
                   - ecr:DescribeRepositories
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: "*"
-
-  # Definición de Tarea
-  TaskDefinition:
-    Type: 'AWS::ECS::TaskDefinition'
+                Resource: '*'
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: !Sub 'task-${ContainerName}'
+      Family: !Sub task-${ContainerName}
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
       Cpu: '1024'
       Memory: '2048'
-      ExecutionRoleArn: !GetAtt ECSRole.Arn
-      TaskRoleArn: !GetAtt ECSRole.Arn
+      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSExecutionRole.Arn
       ContainerDefinitions:
         - Name: !Ref ContainerName
           Image: !Ref Repositorio
           Essential: true
           PortMappings:
             - ContainerPort: 8080
-
-  # Grupo de Seguridad para ALB
-  ALBSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      GroupDescription: 'Permitir trafico HTTP al ALB desde cualquier puerto e IP'
-      VpcId: !ImportValue workshop-pragma-VPCId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 0
-          ToPort: 65535
-          CidrIp: 0.0.0.0/0
-
-  # Grupo de Seguridad para ECS
-  ECSSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
-    Properties:
-      GroupDescription: 'Permitir trafico a los contenedores ECS'
-      VpcId: !ImportValue workshop-pragma-VPCId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8080
-          ToPort: 8080
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-
-  # ALB
-  ALB:
-    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
-    Properties:
-      Name: !Sub 'alb-${ContainerName}'
+      Name: !Sub alb-${ContainerName}
       Subnets:
-        - !ImportValue workshop-pragma-PublicSubnet1
-        - !ImportValue workshop-pragma-PublicSubnet2
+        - !Ref SubnetA
+        - !Ref SubnetB
       SecurityGroups:
         - !Ref ALBSecurityGroup
       Scheme: internet-facing
-
-  # Grupo Objetivo
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
   TargetGroup:
-    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      VpcId: !ImportValue workshop-pragma-VPCId
+      Name: !Sub tg-${ContainerName}
       Port: 8080
       Protocol: HTTP
-      TargetType: ip
+      VpcId: !Ref VPC
       HealthCheckProtocol: HTTP
       HealthCheckPort: '8080'
       HealthCheckPath: /actuator/health
       Matcher:
         HttpCode: 200
-      Name: !Sub 'tg-${ContainerName}'
-    DependsOn: ALB
-
-  # Listener del ALB
+      TargetType: ip
+    DependsOn: LoadBalancer
   Listener:
-    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
-      LoadBalancerArn: !Ref ALB
-      Port: 8080
-      Protocol: HTTP
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
-
-  # Servicio ECS
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 8080
+      Protocol: HTTP
   ECSService:
-    Type: 'AWS::ECS::Service'
+    Type: AWS::ECS::Service
     Properties:
       Cluster: !Ref ECSCluster
-      TaskDefinition: !Ref TaskDefinition
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          SecurityGroups: [!Ref ECSSecurityGroup]
           Subnets:
-            - !ImportValue workshop-pragma-PrivateSubnet1
-            - !ImportValue workshop-pragma-PrivateSubnet2
-      DesiredCount: 1
+            - !Ref SubnetA
+            - !Ref SubnetB
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
       LoadBalancers:
         - ContainerName: !Ref ContainerName
           ContainerPort: 8080
           TargetGroupArn: !Ref TargetGroup
     DependsOn: Listener
-
 Outputs:
-  Url:
-    Description: 'URL'
-    Value: !Sub 'http://${ALB.DNSName}:8080/pragma/stats'
+  UrlAlbApiMutant:
+    Description: URL ALB Api Mutant
+    Value: !Sub http://${LoadBalancer.DNSName}:8080/pragma/stats
+  LoadBalancerDNS:
+    Description: The DNS name of the load balancer
+    Value: !GetAtt LoadBalancer.DNSName
+Transform: AWS::Serverless-2016-10-31
