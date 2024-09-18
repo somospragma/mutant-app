@@ -9,7 +9,7 @@ Parameters:
   Repositorio:
     Type: String
     Description: 'Uri del repositorio'
-    Default: '471112733977.dkr.ecr.us-east-1.amazonaws.com/mutant-app'
+    Default: '<account-id>.dkr.ecr.us-east-1.amazonaws.com/mutant-app'
 
 Resources:
   # Clúster ECS
