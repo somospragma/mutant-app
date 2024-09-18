@@ -9,7 +9,7 @@
     Repositorio:
       Type: String
       Description: Uri del repositorio
-      Default: 891377020453.dkr.ecr.us-east-1.amazonaws.com/backend/demo_microservices
+      Default: <account-id>.dkr.ecr.us-east-1.amazonaws.com/backend/demo_microservices
   Resources:
     VPC:
       Type: AWS::EC2::VPC
