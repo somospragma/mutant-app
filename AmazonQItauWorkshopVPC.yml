@@ -33,6 +33,24 @@ Resources:
         - 1
         - !GetAZs ''
       MapPublicIpOnLaunch: true
+  SubnetPrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      MapPublicIpOnLaunch: false
+  SubnetPrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ''
+      MapPublicIpOnLaunch: false
   RouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -52,6 +70,16 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref SubnetB
+      RouteTableId: !Ref RouteTable
+  SubnetPrivateARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPrivateA
+      RouteTableId: !Ref RouteTable
+  SubnetPrivateBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPrivateB
       RouteTableId: !Ref RouteTable
   DynamoDBTable:
     Type: AWS::DynamoDB::Table
@@ -86,4 +114,14 @@ Outputs:
     Value: !Ref SubnetB
     Export:
         Name: 'workshop-pragma-PublicSubnet2'
+  PrivateSubnet1:
+    Description: The Private Subnet 1
+    Value: !Ref SubnetPrivateA
+    Export:
+        Name: 'workshop-pragma-PrivateSubnet1'
+  PrivateSubnet2:
+    Description: The Private Subnet 2
+    Value: !Ref SubnetPrivateB
+    Export:
+        Name: 'workshop-pragma-PrivateSubnet2'
 Transform: AWS::Serverless-2016-10-31

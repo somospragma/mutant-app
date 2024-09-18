@@ -5,6 +5,7 @@ Parameters:
   ContainerName:
     Type: String
     Description: 'El nombre que se asignara al contenedor.'
+    Description: 'El nombre que se asignara al contenedor.'
     Default: 'mutant-app'
   Repositorio:
     Type: String
